@@ -1,6 +1,6 @@
 blueprint:
   name: Motion Light Pro
-  description: Bewegung -> Licht an, nach Zeit dimmen, danach aus, mit Restore-Szene
+  description: Bewegung -> Licht an, TV pausiert Timer, danach dimmen und aus, mit Restore-Szene
   domain: automation
 
   input:
@@ -26,7 +26,6 @@ blueprint:
 
     restore_scene_id:
       name: Restore Scene ID
-      description: Eindeutiger Name pro Raum, z. B. wohnzimmer_motion_light_restore
       default: wohnzimmer_motion_light_restore
       selector:
         text:
@@ -64,6 +63,7 @@ trigger:
   - platform: state
     entity_id: !input motion_entity
     to: "on"
+    id: motion_on
 
 variables:
   tv_entity: !input tv_entity
@@ -72,8 +72,7 @@ variables:
   dim_brightness: !input dim_brightness
 
 action:
-  # Beim Start immer versuchen, den zuletzt gespeicherten hellen Zustand wiederherzustellen.
-  # Falls es die Szene noch nicht gibt, wird danach normal eingeschaltet.
+  # Bewegung erkannt: immer versuchen, den letzten hellen Zustand wiederherzustellen.
   - service: scene.turn_on
     target:
       entity_id: "{{ restore_scene_entity }}"
@@ -91,6 +90,8 @@ action:
         target:
           entity_id: !input light_entity
 
+  # Wenn TV an ist, bleibt die Automation hier stehen.
+  # Erst wenn TV aus ist, beginnt der Bewegungs-Timer.
   - if:
       - condition: template
         value_template: "{{ tv_entity != '' }}"
@@ -98,27 +99,42 @@ action:
       - wait_template: >
           {{ not is_state(tv_entity, 'on') }}
 
-  - wait_for_trigger:
-      - platform: state
-        entity_id: !input motion_entity
-        to: "off"
-        for:
-          minutes: !input dim_wait
+  # Timer bis Dimmen:
+  # Wenn PIR schon off ist, einfach dim_wait warten.
+  # Wenn PIR noch on ist, auf off für dim_wait warten.
+  - choose:
+      - conditions:
+          - condition: state
+            entity_id: !input motion_entity
+            state: "off"
+        sequence:
+          - delay:
+              minutes: !input dim_wait
+    default:
+      - wait_for_trigger:
+          - platform: state
+            entity_id: !input motion_entity
+            to: "off"
+            for:
+              minutes: !input dim_wait
 
-  # Jetzt ist das Licht noch hell: Zustand speichern.
+  # Vor dem Dimmen hellen Zustand speichern
   - service: scene.create
     data:
       scene_id: "{{ restore_scene_id }}"
       snapshot_entities:
         - !input light_entity
 
-  # Danach auf Dimmwert runter.
+  # Dimmen
   - service: light.turn_on
     target:
       entity_id: !input light_entity
     data:
       brightness_pct: "{{ dim_brightness | int }}"
 
+  # Gedimmter Zustand:
+  # Bei Bewegung wird durch mode: restart die Automation neu gestartet
+  # und oben die Restore-Szene wiederhergestellt.
   - wait_for_trigger:
       - platform: state
         entity_id: !input motion_entity
