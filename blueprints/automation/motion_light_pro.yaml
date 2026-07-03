@@ -77,8 +77,11 @@ variables:
   restore_scene_id: !input restore_scene_id
   restore_scene_entity: "scene.{{ restore_scene_id }}"
   dim_brightness: !input dim_brightness
+  dim_wait: !input dim_wait
+  off_wait: !input off_wait
 
 action:
+  # Bei Bewegung: hellen Zustand wiederherstellen, falls Szene existiert.
   - choose:
       - conditions:
           - condition: trigger
@@ -91,6 +94,8 @@ action:
               entity_id: "{{ restore_scene_entity }}"
 
       - conditions:
+          - condition: trigger
+            id: motion_on
           - condition: state
             entity_id: !input light_entity
             state: "off"
@@ -99,41 +104,74 @@ action:
             target:
               entity_id: !input light_entity
 
-  - if:
-      - condition: template
-        value_template: "{{ tv_entity != '' }}"
-    then:
-      - wait_template: >
-          {{ not is_state(tv_entity, 'on') }}
+  # Timer bis zum Dimmen.
+  # Zählt nur, wenn PIR off und TV aus ist.
+  # Bewegung oder TV an setzt den Timer zurück.
+  - variables:
+      timer_minutes: 0
 
-  - choose:
-      - conditions:
-          - condition: state
-            entity_id: !input motion_entity
-            state: "off"
-        sequence:
-          - delay:
-              minutes: !input dim_wait
-    default:
-      - wait_for_trigger:
-          - platform: state
-            entity_id: !input motion_entity
-            to: "off"
-            for:
-              minutes: !input dim_wait
+  - repeat:
+      while:
+        - condition: template
+          value_template: "{{ timer_minutes < (dim_wait | int) }}"
+      sequence:
+        - if:
+            - condition: template
+              value_template: "{{ tv_entity != '' and is_state(tv_entity, 'on') }}"
+          then:
+            - wait_template: >
+                {{ not is_state(tv_entity, 'on') }}
+            - variables:
+                timer_minutes: 0
 
+        - if:
+            - condition: state
+              entity_id: !input motion_entity
+              state: "on"
+          then:
+            - wait_for_trigger:
+                - platform: state
+                  entity_id: !input motion_entity
+                  to: "off"
+            - variables:
+                timer_minutes: 0
+
+        - wait_for_trigger:
+            - platform: state
+              entity_id: !input motion_entity
+              to: "on"
+            - platform: template
+              value_template: "{{ tv_entity != '' and is_state(tv_entity, 'on') }}"
+          timeout:
+            minutes: 1
+          continue_on_timeout: true
+
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ wait.completed }}"
+              sequence:
+                - variables:
+                    timer_minutes: 0
+          default:
+            - variables:
+                timer_minutes: "{{ timer_minutes + 1 }}"
+
+  # Hellen Zustand speichern
   - service: scene.create
     data:
       scene_id: "{{ restore_scene_id }}"
       snapshot_entities:
         - !input light_entity
 
+  # Runterdimmen
   - service: light.turn_on
     target:
       entity_id: !input light_entity
     data:
       brightness_pct: "{{ dim_brightness | int }}"
 
+  # Gedimmter Zustand: bei Bewegung wiederherstellen, sonst nach off_wait aus
   - wait_for_trigger:
       - platform: state
         entity_id: !input motion_entity
