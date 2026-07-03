@@ -1,6 +1,6 @@
 blueprint:
   name: Motion Light Pro
-  description: Bewegung/Button -> Licht an, nach Zeit dimmen, danach aus, mit Restore-Szene
+  description: Bewegung -> Licht an, nach Zeit dimmen, danach aus, mit Restore-Szene
   domain: automation
 
   input:
@@ -66,25 +66,27 @@ trigger:
     to: "on"
 
 variables:
-  motion_entity: !input motion_entity
-  light_entity: !input light_entity
   tv_entity: !input tv_entity
   restore_scene_id: !input restore_scene_id
   restore_scene_entity: "scene.{{ restore_scene_id }}"
-  dim_wait: !input dim_wait
-  off_wait: !input off_wait
   dim_brightness: !input dim_brightness
 
 action:
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ restore_scene_entity in states }}"
-        sequence:
-          - service: scene.turn_on
-            target:
-              entity_id: "{{ restore_scene_entity }}"
-    default:
+  # Beim Start immer versuchen, den zuletzt gespeicherten hellen Zustand wiederherzustellen.
+  # Falls es die Szene noch nicht gibt, wird danach normal eingeschaltet.
+  - service: scene.turn_on
+    target:
+      entity_id: "{{ restore_scene_entity }}"
+    continue_on_error: true
+
+  - delay:
+      milliseconds: 300
+
+  - if:
+      - condition: state
+        entity_id: !input light_entity
+        state: "off"
+    then:
       - service: light.turn_on
         target:
           entity_id: !input light_entity
@@ -103,12 +105,14 @@ action:
         for:
           minutes: !input dim_wait
 
+  # Jetzt ist das Licht noch hell: Zustand speichern.
   - service: scene.create
     data:
       scene_id: "{{ restore_scene_id }}"
       snapshot_entities:
         - !input light_entity
 
+  # Danach auf Dimmwert runter.
   - service: light.turn_on
     target:
       entity_id: !input light_entity
