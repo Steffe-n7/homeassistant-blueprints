@@ -127,6 +127,7 @@ mode: restart
 action:
   - choose:
       - conditions:
+      - conditions:
           - condition: trigger
             id: motion_on
         sequence:
@@ -136,27 +137,22 @@ action:
                 - !input dim_timer
                 - !input off_timer
 
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ restore_scene_entity }}"
+            continue_on_error: true
+
+          - delay:
+              milliseconds: 300
+
           - if:
-              - condition: template
-                value_template: >
-                  {{ is_state(light_entity, 'off') or is_state(off_timer, 'active') }}
+              - condition: state
+                entity_id: !input light_entity
+                state: "off"
             then:
-              - service: scene.turn_on
+              - service: light.turn_on
                 target:
-                  entity_id: "{{ restore_scene_entity }}"
-                continue_on_error: true
-
-              - delay:
-                  milliseconds: 300
-
-              - if:
-                  - condition: state
-                    entity_id: !input light_entity
-                    state: "off"
-                then:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
+                  entity_id: !input light_entity
 
       - conditions:
           - condition: trigger
