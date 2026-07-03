@@ -127,7 +127,6 @@ mode: restart
 action:
   - choose:
       - conditions:
-      - conditions:
           - condition: trigger
             id: motion_on
         sequence:
