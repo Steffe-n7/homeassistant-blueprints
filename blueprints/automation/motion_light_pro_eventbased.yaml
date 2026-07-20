@@ -87,6 +87,11 @@ trigger:
     to: "on"
     id: light_on
 
+  - platform: state
+    entity_id: !input light_entity
+    to: "off"
+    id: light_off
+
   - platform: event
     event_type: timer.finished
     event_data:
@@ -118,14 +123,27 @@ variables:
   dim_brightness: !input dim_brightness
   dim_wait: !input dim_wait
   off_wait: !input off_wait
-  dim_duration: "{{ '%02d:%02d:00' | format((dim_wait | int // 60), (dim_wait | int % 60)) }}"
-  off_duration: "{{ '%02d:%02d:00' | format((off_wait | int // 60), (off_wait | int % 60)) }}"
+
+  dim_duration: >
+    {{ '%02d:%02d:00' | format(
+      (dim_wait | int // 60),
+      (dim_wait | int % 60)
+    ) }}
+
+  off_duration: >
+    {{ '%02d:%02d:00' | format(
+      (off_wait | int // 60),
+      (off_wait | int % 60)
+    ) }}
+
   tv_is_on: "{{ tv_entity != '' and is_state(tv_entity, 'on') }}"
 
 mode: restart
 
 action:
   - choose:
+
+      # Bewegung erkannt
       - conditions:
           - condition: trigger
             id: motion_on
@@ -153,6 +171,7 @@ action:
                 target:
                   entity_id: !input light_entity
 
+      # Keine Bewegung mehr
       - conditions:
           - condition: trigger
             id: motion_off
@@ -161,6 +180,7 @@ action:
               - condition: state
                 entity_id: !input light_entity
                 state: "on"
+
               - condition: template
                 value_template: "{{ not tv_is_on }}"
             then:
@@ -170,6 +190,7 @@ action:
                 data:
                   duration: "{{ dim_duration }}"
 
+      # Licht eingeschaltet
       - conditions:
           - condition: trigger
             id: light_on
@@ -178,6 +199,7 @@ action:
               - condition: state
                 entity_id: !input motion_entity
                 state: "off"
+
               - condition: template
                 value_template: "{{ not tv_is_on }}"
             then:
@@ -187,6 +209,19 @@ action:
                 data:
                   duration: "{{ dim_duration }}"
 
+      # Licht ausgeschaltet
+      # -> laufende Abschaltlogik sofort stoppen
+      - conditions:
+          - condition: trigger
+            id: light_off
+        sequence:
+          - service: timer.cancel
+            target:
+              entity_id:
+                - !input dim_timer
+                - !input off_timer
+
+      # TV eingeschaltet
       - conditions:
           - condition: trigger
             id: tv_on
@@ -207,6 +242,7 @@ action:
                   entity_id: "{{ restore_scene_entity }}"
                 continue_on_error: true
 
+      # TV ausgeschaltet
       - conditions:
           - condition: trigger
             id: tv_off
@@ -215,6 +251,7 @@ action:
               - condition: state
                 entity_id: !input light_entity
                 state: "on"
+
               - condition: state
                 entity_id: !input motion_entity
                 state: "off"
@@ -225,6 +262,7 @@ action:
                 data:
                   duration: "{{ dim_duration }}"
 
+      # Dim-Timer abgelaufen
       - conditions:
           - condition: trigger
             id: dim_timer_finished
@@ -233,8 +271,17 @@ action:
               - condition: state
                 entity_id: !input motion_entity
                 state: "off"
+
               - condition: template
                 value_template: "{{ not tv_is_on }}"
+
+              # Wichtig:
+              # Nur dimmen, wenn das Licht wirklich noch eingeschaltet ist.
+              # Bei off / unavailable / unknown passiert nichts.
+              - condition: state
+                entity_id: !input light_entity
+                state: "on"
+
             then:
               - service: scene.create
                 data:
@@ -254,6 +301,7 @@ action:
                 data:
                   duration: "{{ off_duration }}"
 
+      # Aus-Timer abgelaufen
       - conditions:
           - condition: trigger
             id: off_timer_finished
@@ -262,8 +310,15 @@ action:
               - condition: state
                 entity_id: !input motion_entity
                 state: "off"
+
               - condition: template
                 value_template: "{{ not tv_is_on }}"
+
+              # Nur ausschalten, wenn das Licht tatsächlich noch an ist.
+              - condition: state
+                entity_id: !input light_entity
+                state: "on"
+
             then:
               - service: light.turn_off
                 target:
